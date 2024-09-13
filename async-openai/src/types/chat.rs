@@ -621,6 +621,14 @@ pub enum FinishReason {
     ToolCalls,
     ContentFilter,
     FunctionCall,
+    // Anthropic
+    EndTurn,
+    MaxTokens,
+    StopSequence,
+    ToolUse,
+    // Mistral
+    ModelLength,
+    Error
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
