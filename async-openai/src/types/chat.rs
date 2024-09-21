@@ -630,6 +630,7 @@ pub enum FinishReason {
     ModelLength,
     Error,
     // Cohere Command R+
+    #[serde(rename = "COMPLETE")]
     Complete
 }
 
