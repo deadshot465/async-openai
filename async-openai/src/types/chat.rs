@@ -628,7 +628,9 @@ pub enum FinishReason {
     ToolUse,
     // Mistral
     ModelLength,
-    Error
+    Error,
+    // Cohere Command R+
+    Complete
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
