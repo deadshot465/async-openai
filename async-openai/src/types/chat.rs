@@ -679,6 +679,12 @@ pub enum ChatCompletionAudioFormat {
 }
 
 #[derive(Clone, Serialize, Debug, Deserialize, PartialEq)]
+pub struct ChatCompletionRequestProvider {
+    pub order: Vec<String>,
+    pub allow_fallbacks: bool
+}
+
+#[derive(Clone, Serialize, Debug, Deserialize, PartialEq)]
 pub struct ChatCompletionAudio {
     /// The voice the model uses to respond. Supported voices are `ash`, `ballad`, `coral`, `sage`, and `verse` (also supported but not recommended are `alloy`, `echo`, and `shimmer`; these voices are less expressive).
     pub voice: ChatCompletionAudioVoice,
@@ -849,6 +855,10 @@ pub struct CreateChatCompletionRequest {
     /// Learn more about the [web search tool](https://platform.openai.com/docs/guides/tools-web-search?api-mode=chat).
     pub web_search_options: Option<WebSearchOptions>,
 
+    /// OpenRouter-specific. A list of custom providers to route your request to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ChatCompletionRequestProvider>,
+
     /// Deprecated in favor of `tool_choice`.
     ///
     /// Controls which (if any) function is called by the model.
@@ -884,6 +894,17 @@ pub enum FinishReason {
     ToolCalls,
     ContentFilter,
     FunctionCall,
+    // Anthropic
+    EndTurn,
+    MaxTokens,
+    StopSequence,
+    ToolUse,
+    // Mistral
+    ModelLength,
+    Error,
+    // Cohere
+    #[serde(rename = "COMPLETE")]
+    Complete
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -948,6 +969,7 @@ pub struct CreateChatCompletionResponse {
     pub system_fingerprint: Option<String>,
 
     /// The object type, which is always `chat.completion`.
+    #[serde(skip_deserializing)]
     pub object: String,
     pub usage: Option<CompletionUsage>,
 }
