@@ -13,36 +13,40 @@
     <img src="https://docs.rs/async-openai/badge.svg" />
     </a>
 </div>
-<div align="center">
-<sub>Logo created by this <a href="https://github.com/64bit/async-openai/tree/main/examples/create-image-b64-json">repo itself</a></sub>
-</div>
 
 ## Overview
 
-`async-openai` is an unofficial Rust library for OpenAI.
+`async-openai` is an unofficial Rust library for OpenAI, based on [OpenAI OpenAPI spec](https://github.com/openai/openai-openapi).
+  - Requests are retried with exponential backoff when [rate limited](https://platform.openai.com/docs/guides/rate-limits).
+  - Ergonomic builder pattern for all request objects.
+  - SSE streaming.
+  - Granular feature flags to enable any types or apis.
+  - WASM.
+  - Middleware support with [tower](https://crates.io/crates/tower) ecosystem.
 
-- It's based on [OpenAI OpenAPI spec](https://github.com/openai/openai-openapi)
-- Current features:
-  - [x] Assistants (v2)
-  - [x] Audio
-  - [x] Batch
-  - [x] Chat
-  - [x] Completions (Legacy)
-  - [x] Embeddings
-  - [x] Files
-  - [x] Fine-Tuning
-  - [x] Images
-  - [x] Models
-  - [x] Moderations
-  - [x] Organizations | Administration (partially implemented)
-  - [x] Realtime (Beta) (partially implemented)
-  - [x] Responses (partially implemented)
-  - [x] Uploads
-- Bring your own custom types for Request or Response objects.
-- SSE streaming on available APIs
-- Requests (except SSE streaming) including form submissions are retried with exponential backoff when [rate limited](https://platform.openai.com/docs/guides/rate-limits).
-- Ergonomic builder pattern for all request objects.
-- Microsoft Azure OpenAI Service (only for APIs matching OpenAI spec)
+**+ OpenAI compatible providers**
+  - Bring your own custom types for Request or Response objects.
+  - Customize path, query and headers per request or for all requests.
+  - Microsoft Azure OpenAI Service.
+
+<details>
+<summary>Feature Flags</summary>
+
+| What | APIs | Crate Feature Flags |
+|---|---|---|
+| **Responses API** | Responses, Conversations, Streaming events, Websocket Events | `responses` |
+| **Webhooks** | Webhook Events | `webhook` |
+| **Platform APIs** | Audio, Audio Streaming, Videos, Images, Image Streaming, Embeddings, Evals, Fine-tuning, Graders, Batch, Files, Uploads, Models, Moderations, Safety Alerts, Content Provenance Checks | `audio`, `video`, `image`, `embedding`, `evals`, `finetuning`, `grader`, `batch`, `file`, `upload`, `model`, `moderation`, `safety`, `content-provenance-checks` |
+| **Vector stores** | Vector stores, Vector store files, Vector store file batches | `vectorstore` |
+| **ChatKit** <sub>(Beta)</sub> | ChatKit | `chatkit` |
+| **Containers** | Containers, Container Files | `container` |
+| **Skills** | Skills | `skill` |
+| **Realtime** | Realtime Calls, Client secrets, Client events, Server events | `realtime` |
+| **Chat Completions** | Chat Completions, Streaming | `chat-completion` |
+| **Administration** | Admin API Keys, Audit Logs, Certificates, Data Retention, Groups, Invites, Projects, Roles, Spend Alerts, Spend Limits, Usage, Users; And their nested APIs | `administration` |
+| **Legacy** | Completions | `completions` |
+
+</details>
 
 ## Usage
 
@@ -58,19 +62,17 @@ export OPENAI_API_KEY='sk-...'
 $Env:OPENAI_API_KEY='sk-...'
 ```
 
+Other official environment variables supported are: `OPENAI_ADMIN_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`
+
 - Visit [examples](https://github.com/64bit/async-openai/tree/main/examples) directory on how to use `async-openai`.
 - Visit [docs.rs/async-openai](https://docs.rs/async-openai) for docs.
 
-## Realtime API
-
-Only types for Realtime API are implemented, and can be enabled with feature flag `realtime`.
-These types were written before OpenAI released official specs.
 
 ## Image Generation Example
 
 ```rust
 use async_openai::{
-    types::{CreateImageRequestArgs, ImageSize, ImageResponseFormat},
+    types::images::{CreateImageRequestArgs, ImageModel, ImageSize},
     Client,
 };
 use std::error::Error;
@@ -81,18 +83,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::new();
 
     let request = CreateImageRequestArgs::default()
+        .model(ImageModel::GptImage2)
         .prompt("cats on sofa and carpet in living room")
         .n(2)
-        .response_format(ImageResponseFormat::Url)
-        .size(ImageSize::S256x256)
+        .size(ImageSize::Auto)
         .user("async-openai")
         .build()?;
 
-    let response = client.images().create(request).await?;
+    let response = client.images().generate(request).await?;
 
-    // Download and save images to ./data directory.
-    // Each url is downloaded and saved in dedicated Tokio task.
-    // Directory is created if it doesn't exist.
+    // Concurrently save each image in its own Tokio task.
+    // Create directory if it doesn't exist.
     let paths = response.save("./data").await?;
 
     paths
@@ -104,15 +105,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 ```
 
 <div align="center">
-  <img width="315" src="https://raw.githubusercontent.com/64bit/async-openai/assets/create-image/img-1.png" />
-  <img width="315" src="https://raw.githubusercontent.com/64bit/async-openai/assets/create-image/img-2.png" />
+    <img width="400" alt="Image" src="https://github.com/user-attachments/assets/f9c983c7-1aa6-4d40-aac6-fb07a63b0f7f" />
+    <img width="400" alt="Image" src="https://github.com/user-attachments/assets/90599f6f-6f21-464b-b8c2-529f6558d9a2" />
   <br/>
-  <sub>Scaled up for README, actual size 256x256</sub>
 </div>
 
-## Bring Your Own Types
+## OpenAI Compatible Providers
 
-Enable methods whose input and outputs are generics with `byot` feature. It creates a new method with same name and `_byot` suffix.
+Even though the scope of the crate is official OpenAI APIs, it is very configurable to work with compatible providers.
+
+### Bring Your Own Types
+
+Enable methods whose input and outputs are generics with `byot` feature. It creates a new method with same name and `_byot` suffix. 
 
 For example, to use `serde_json::Value` as request and response type:
 ```rust
@@ -136,34 +140,115 @@ let response: Value = client
 ```
 
 This can be useful in many scenarios:
-- To use this library with other OpenAI compatible APIs whose types don't exactly match OpenAI. 
-- Extend existing types in this crate with new fields with `serde`.
-- To avoid verbose types.
-- To escape deserialization errors.
+- When shape of request/response in OpenAI-compatible APIs don't exactly match OpenAI. 
+- Extend existing types in this crate with new fields like `extra_body` (with serde flatten)
+- To avoid typing verbose types.
+- To escape deserialization errors on expected type and actual response mismatch.
 
-Visit [examples/bring-your-own-type](https://github.com/64bit/async-openai/tree/main/examples/bring-your-own-type) directory to learn more.
+`*_byot` methods require same trait bounds as regular methods.
+
+Visit [examples/bring-your-own-type](https://github.com/64bit/async-openai/tree/main/examples/bring-your-own-type)
+directory to learn more.
+
+#### References: Borrow Instead of Move
+
+With `byot` use reference to request types
+
+```rust
+let response: Response = client
+  .responses()
+  .create_byot(&request).await?
+```
+
+Visit [examples/borrow-instead-of-move](https://github.com/64bit/async-openai/tree/main/examples/borrow-instead-of-move) to learn more.
+
+
+### Configurable Requests
+
+Configure path, headers, and query parameters for a HTTP request.
+
+#### Request Options
+Use `path()`, `.query()`, `.header()`, `.headers()` on the API group. Path overrides the default path but all other methods are additive - adds to existing query or headers.
+
+For demonstration:
+```rust
+client.
+  .chat()
+  // override default path
+  .path("/v1/messages")
+  // query can be a struct or a map too - additive
+  .query(&[("limit", "10")])?
+  // header for unique id for this API request - additive
+  .header("x-request-id", "id123")?
+  .list()
+  .await?
+```
+
+#### Modifying all Requests
+
+Use `Config`, `OpenAIConfig` etc. for configuring url, headers or query parameters globally for all requests.
+
+
+### Dynamic Dispatch
+
+This allows you to use same code (say a `fn`) to call APIs on different OpenAI-compatible providers.
+
+Create a client with `Box` or `Arc` wrapped configuration.
+
+For example:
+
+```rust
+use async_openai::{Client, config::{Config, OpenAIConfig}};
+
+// Use `Box` or `std::sync::Arc` to wrap the config
+let config = Box::new(OpenAIConfig::default()) as Box<dyn Config>;
+// create client
+let client: Client<Box<dyn Config>> = Client::with_config(config);
+
+// A function can now accept a `&Client<Box<dyn Config>>` parameter
+// which can invoke any openai compatible api
+fn chat_completion(client: &Client<Box<dyn Config>>) { 
+    todo!() 
+}
+```
+
+## Rust Types
+
+To only use Rust types from the crate - disable default features and use feature flag `types`. 
+
+There are granular feature flags like `response-types`, `chat-completion-types`, etc.
+
+These granular types are enabled when the corresponding API feature is enabled - for example `responses` will enable `response-types`.
+
+## TLS backends
+
+The crate exposes the underlying `reqwest` TLS options as Cargo features. Pick exactly one; disable default features when choosing anything other than `rustls`.
+
+| Feature | TLS implementation | Crypto provider | Notes |
+| --- | --- | --- | --- |
+| `rustls` (default) | `rustls` + `rustls-platform-verifier` roots | `aws-lc-rs` bundled | Works out of the box. |
+| `rustls-no-provider` | `rustls` + `rustls-platform-verifier` roots | **None** — install your own | Use this to pick `ring` (or share a provider across your tree). Call e.g. `rustls::crypto::ring::default_provider().install_default().unwrap();` at the start of `main`. |
+| `native-tls` | System TLS | n/a | OpenSSL on Linux, Secure Transport on macOS, SChannel on Windows. |
+| `native-tls-vendored` | System TLS, vendored OpenSSL | n/a | Statically links a bundled OpenSSL build. |
+
+## Webhooks
+
+Support for webhook includes event types, signature verification, and building webhook events from payloads.
+
+## Middleware
+
+Middleware is supported via Tower ecosystem, which can be enabled with `middleware` feature. See [middleware](https://github.com/64bit/async-openai/blob/main/async-openai/MIDDLEWARE.md) for more detail.
 
 ## Contributing
 
-Thank you for taking the time to contribute and improve the project. I'd be happy to have you!
+🎉 Thank you for taking the time to contribute and improve the project. I'd be happy to have you!
 
-All forms of contributions, such as new features requests, bug fixes, issues, documentation, testing, comments, [examples](https://github.com/64bit/async-openai/tree/main/examples) etc. are welcome.
+Please see [contributing guide!](https://github.com/64bit/async-openai/blob/main/CONTRIBUTING.md)
 
-A good starting point would be to look at existing [open issues](https://github.com/64bit/async-openai/issues).
-
-To maintain quality of the project, a minimum of the following is a must for code contribution:
-
-- **Names & Documentation**: All struct names, field names and doc comments are from OpenAPI spec. Nested objects in spec without names leaves room for making appropriate name.
-- **Tested**: For changes supporting test(s) and/or example is required. Existing examples, doc tests, unit tests, and integration tests should be made to work with the changes if applicable.
-- **Scope**: Keep scope limited to APIs available in official documents such as [API Reference](https://platform.openai.com/docs/api-reference) or [OpenAPI spec](https://github.com/openai/openai-openapi/). Other LLMs or AI Providers offer OpenAI-compatible APIs, yet they may not always have full parity. In such cases, the OpenAI spec takes precedence.
-- **Consistency**: Keep code style consistent across all the "APIs" that library exposes; it creates a great developer experience.
-
-This project adheres to [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct)
 
 ## Complimentary Crates
-
-- [openai-func-enums](https://github.com/frankfralick/openai-func-enums) provides procedural macros that make it easier to use this library with OpenAI API's tool calling feature. It also provides derive macros you can add to existing [clap](https://github.com/clap-rs/clap) application subcommands for natural language use of command line tools. It also supports openai's [parallel tool calls](https://platform.openai.com/docs/guides/function-calling/parallel-function-calling) and allows you to choose between running multiple tool calls concurrently or own their own OS threads.
 - [async-openai-wasm](https://github.com/ifsheldon/async-openai-wasm) provides WASM support.
+- [openai-func-enums](https://github.com/frankfralick/openai-func-enums) macros for working with function/tool calls.
 
 ## License
 

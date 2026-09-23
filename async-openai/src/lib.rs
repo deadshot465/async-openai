@@ -30,33 +30,35 @@
 //!
 //!```
 //!# tokio_test::block_on(async {
-//!
-//! use async_openai::{Client, types::{CreateCompletionRequestArgs}};
+//! use async_openai::{Client, types::responses::{CreateResponseArgs}};
 //!
 //! // Create client
 //! let client = Client::new();
 //!
 //! // Create request using builder pattern
 //! // Every request struct has companion builder struct with same name + Args suffix
-//! let request = CreateCompletionRequestArgs::default()
-//!     .model("gpt-3.5-turbo-instruct")
-//!     .prompt("Tell me the recipe of alfredo pasta")
-//!     .max_tokens(40_u32)
-//!     .build()
-//!     .unwrap();
+//! let request = CreateResponseArgs::default()
+//!     .model("gpt-5-mini")
+//!     .input("tell me the recipe of pav bhaji")
+//!     .max_output_tokens(512u32)
+//!     .build()?;
 //!
 //! // Call API
 //! let response = client
-//!     .completions()      // Get the API "group" (completions, images, etc.) from the client
-//!     .create(request)    // Make the API call in that "group"
-//!     .await
-//!     .unwrap();
+//!     .responses()      // Get the API "group" (responses, images, etc.) from the client
+//!     .create(request)  // Make the API call in that "group"
+//!     .await?;
 //!
-//! println!("{}", response.choices.first().unwrap().text);
+//! println!("{:?}", response.output_text());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # });
 //!```
 //!
-//! ## Bring Your Own Types
+//! ## OpenAI Compatible Providers
+//!
+//! Even though the scope of the crate is official OpenAI APIs, it is very configurable to work with compatible providers.
+//!
+//! ### Bring Your Own Types
 //!
 //! To use custom types for inputs and outputs, enable `byot` feature which provides additional generic methods with same name and `_byot` suffix.
 //! This feature is available on methods whose return type is not `Bytes`
@@ -85,16 +87,87 @@
 //!            "model": "gpt-4o",
 //!            "store": false
 //!        }))
-//!        .await
-//!        .unwrap();
+//!        .await?;
 //!
 //!  if let Some(content) = response["choices"][0]["message"]["content"].as_str() {
 //!     println!("{}", content);
 //!  }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # });
 //!```
 //!
-//! ## Microsoft Azure
+//! **References: Borrow Instead of Move**
+//!
+//! With `byot` use reference to request types
+//!
+//! ```
+//! # #[cfg(feature = "byot")]
+//! # tokio_test::block_on(async {
+//! # use async_openai::{Client, types::responses::{CreateResponse, Response}};
+//! # let client = Client::new();
+//! # let request = CreateResponse::default();
+//! let response: Response = client
+//!   .responses()
+//!   .create_byot(&request).await?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # });
+//! ```
+//!
+//! ### Configurable Requests
+//! Configure path, headers, and query parameters for a HTTP request.
+//!
+//! **Request Options**
+//!
+//! Use `path()`, `.query()`, `.header()`, `.headers()` on the API group. Path overrides the default path but all other methods are additive - adds to existing query or headers.
+//!
+//! For demonstration:
+//! ```
+//! # tokio_test::block_on(async {
+//! # use async_openai::Client;
+//! # use async_openai::traits::RequestOptionsBuilder;
+//! # let client = Client::new();
+//! client
+//!   .chat()
+//!   // override default path
+//!   .path("/v1/messages")
+//!   // query can be a struct or a map too - additive
+//!   .query(&[("limit", "10")])?
+//!   // header for unique id for this API request - additive
+//!   .header("x-request-id", "id123")?
+//!   .list()
+//!   .await?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # });
+//! ```
+//!
+//! **Modifying all Requests**
+//!
+//! Use `Config`, `OpenAIConfig` etc. for configuring url, headers or query parameters globally for all requests.
+//!
+//!
+//! ### Dynamic Dispatch
+//!
+//! This allows you to use same code (say a `fn`) to call APIs on different OpenAI-compatible providers.
+//!
+//! Create a client with `Box` or `Arc` wrapped configuration.
+//!
+//! For example:
+//! ```
+//! use async_openai::{Client, config::{Config, OpenAIConfig}};
+//!
+//! // Use `Box` or `std::sync::Arc` to wrap the config
+//! let config = Box::new(OpenAIConfig::default()) as Box<dyn Config>;
+//! // create client
+//! let client: Client<Box<dyn Config>> = Client::with_config(config);
+//!
+//! // A function can now accept a `&Client<Box<dyn Config>>` parameter
+//! // which can invoke any openai compatible api
+//! fn chat_completion(client: &Client<Box<dyn Config>>) {
+//!     todo!()
+//! }
+//! ```
+//!
+//! ### Microsoft Azure
 //!
 //! ```
 //! use async_openai::{Client, config::AzureConfig};
@@ -107,83 +180,184 @@
 //!
 //! let client = Client::with_config(config);
 //!
-//! // Note that `async-openai` only implements OpenAI spec
-//! // and doesn't maintain parity with the spec of Azure OpenAI service.
 //!
 //! ```
 //!
+//!
+//! ## Rust Types
+//!
+//! To only use Rust types from the crate - use feature flag `types`.
+//!
+//! There are granular feature flags like `response-types`, `chat-completion-types`, etc.
+//!
+//! These granular types are enabled when the corresponding API feature is enabled - for example `responses` will enable `response-types`.
+//!
+//! ## WASM
+//! WASM is supported for all APIs.
+//! See [examples/wasm-responses](https://github.com/64bit/async-openai/tree/main/examples/wasm-responses) or [examples/tower-wasm](https://github.com/64bit/async-openai/tree/main/examples/tower-wasm).
+//!
+//!
+//! ## Middleware
+//!
+//! Middleware is supported via Tower ecosystem. See [`middleware`] for more detail.
 //!
 //! ## Examples
 //! For full working examples for all supported features see [examples](https://github.com/64bit/async-openai/tree/main/examples) directory in the repository.
 //!
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(feature = "byot")]
+#[cfg(all(feature = "_api", feature = "byot"))]
+#[allow(unused_imports)]
 pub(crate) use async_openai_macros::byot;
 
-#[cfg(not(feature = "byot"))]
+#[cfg(all(feature = "_api", not(feature = "byot")))]
+#[allow(unused_imports)]
 pub(crate) use async_openai_macros::byot_passthrough as byot;
 
-mod assistants;
+// #[cfg(all(not(feature = "_api"), not(feature = "byot")))]
+// #[macro_export]
+// macro_rules! byot {
+//     ($($tt:tt)*) => {
+//         $($tt)*
+//     };
+// }
+
+#[cfg(feature = "administration")]
+mod admin;
+#[cfg(feature = "audio")]
 mod audio;
-mod audit_logs;
+#[cfg(feature = "batch")]
 mod batches;
+#[cfg(feature = "chat-completion")]
 mod chat;
+#[cfg(feature = "chatkit")]
+mod chatkit;
+#[cfg(feature = "_api")]
 mod client;
+#[cfg(feature = "completions")]
 mod completion;
+#[cfg(feature = "_api")]
 pub mod config;
+#[cfg(feature = "container")]
+mod containers;
+#[cfg(feature = "image")]
 mod download;
+#[cfg(feature = "embedding")]
 mod embedding;
 pub mod error;
+#[cfg(feature = "evals")]
+mod evals;
+#[cfg(feature = "_api")]
+mod executor;
+#[cfg(feature = "file")]
 mod file;
+#[cfg(feature = "finetuning")]
 mod fine_tuning;
+#[cfg(feature = "image")]
 mod image;
-mod invites;
-mod messages;
+#[cfg(feature = "_api")]
+mod impls;
+#[cfg(feature = "middleware")]
+pub mod middleware;
+#[cfg(feature = "model")]
 mod model;
+#[cfg(feature = "moderation")]
 mod moderation;
-mod project_api_keys;
-mod project_service_accounts;
-mod project_users;
-mod projects;
+#[cfg(feature = "realtime")]
+mod realtime;
+#[cfg(feature = "_api")]
+mod request_options;
+#[cfg(feature = "responses")]
 mod responses;
-mod runs;
-mod steps;
-mod threads;
+#[cfg(feature = "_api")]
+#[allow(dead_code)]
+#[path = "middleware/retry/mod.rs"]
+mod retry;
+#[cfg(feature = "skill")]
+mod skills;
+#[cfg(feature = "_api")]
 pub mod traits;
 pub mod types;
+#[cfg(feature = "upload")]
 mod uploads;
-mod users;
+#[cfg(any(
+    feature = "content-provenance-checks",
+    feature = "audio",
+    feature = "file",
+    feature = "upload",
+    feature = "image",
+    feature = "video",
+    feature = "container",
+    feature = "skill"
+))]
 mod util;
-mod vector_store_file_batches;
-mod vector_store_files;
-mod vector_stores;
+#[cfg(feature = "vectorstore")]
+mod vectorstores;
+#[cfg(feature = "video")]
+mod video;
+#[cfg(feature = "webhook")]
+pub mod webhooks;
 
-pub use assistants::Assistants;
-pub use audio::Audio;
-pub use audit_logs::AuditLogs;
+// admin::* would be good - however its expanded here so that docs.rs shows the feature flags
+#[cfg(feature = "administration")]
+pub use admin::{
+    Admin, AdminAPIKeys, AuditLogs, Certificates, GroupRoles, GroupUsers, Groups, Invites,
+    OrganizationDataRetentions, OrganizationSpendAlerts, OrganizationSpendLimit, ProjectAPIKeys,
+    ProjectCertificates, ProjectDataRetentions, ProjectGroupRoles, ProjectGroups,
+    ProjectHostedToolPermission, ProjectModelPermission, ProjectRateLimits, ProjectRoles,
+    ProjectServiceAccounts, ProjectSpendAlerts, ProjectSpendLimit, ProjectUserRoles, ProjectUsers,
+    Projects, Roles, Usage, UserRoles, Users,
+};
+#[cfg(feature = "audio")]
+pub use audio::{Audio, Speech, Transcriptions, Translations};
+#[cfg(feature = "batch")]
 pub use batches::Batches;
+#[cfg(feature = "chat-completion")]
 pub use chat::Chat;
+#[cfg(feature = "chatkit")]
+pub use chatkit::Chatkit;
+#[cfg(feature = "_api")]
 pub use client::Client;
+#[cfg(feature = "completions")]
 pub use completion::Completions;
+#[cfg(feature = "container")]
+pub use containers::{ContainerFiles, Containers};
+#[cfg(feature = "embedding")]
 pub use embedding::Embeddings;
+#[cfg(feature = "evals")]
+pub use evals::{EvalRunOutputItems, EvalRuns, Evals};
+#[cfg(feature = "file")]
 pub use file::Files;
+#[cfg(feature = "finetuning")]
 pub use fine_tuning::FineTuning;
+#[cfg(feature = "image")]
 pub use image::Images;
-pub use invites::Invites;
-pub use messages::Messages;
+#[cfg(feature = "model")]
 pub use model::Models;
+#[cfg(feature = "moderation")]
 pub use moderation::Moderations;
-pub use project_api_keys::ProjectAPIKeys;
-pub use project_service_accounts::ProjectServiceAccounts;
-pub use project_users::ProjectUsers;
-pub use projects::Projects;
-pub use responses::Responses;
-pub use runs::Runs;
-pub use steps::Steps;
-pub use threads::Threads;
+#[cfg(feature = "realtime")]
+pub use realtime::{Realtime, RealtimeTranslations};
+#[cfg(feature = "_api")]
+pub use request_options::RequestOptions;
+#[cfg(feature = "responses")]
+pub use responses::{ConversationItems, Conversations, Responses};
+#[cfg(feature = "skill")]
+pub use skills::{SkillVersions, Skills};
+#[cfg(feature = "upload")]
 pub use uploads::Uploads;
-pub use users::Users;
-pub use vector_store_file_batches::VectorStoreFileBatches;
-pub use vector_store_files::VectorStoreFiles;
-pub use vector_stores::VectorStores;
+#[cfg(feature = "vectorstore")]
+pub use vectorstores::{VectorStoreFileBatches, VectorStoreFiles, VectorStores};
+#[cfg(feature = "video")]
+#[allow(deprecated)]
+pub use video::Videos;
+
+#[cfg(feature = "safety")]
+mod safety;
+#[cfg(feature = "safety")]
+pub use safety::*;
+
+#[cfg(feature = "content-provenance-checks")]
+mod content_provenance_checks;
+#[cfg(feature = "content-provenance-checks")]
+pub use content_provenance_checks::ContentProvenanceChecks;

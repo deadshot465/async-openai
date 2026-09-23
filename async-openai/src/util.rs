@@ -1,19 +1,16 @@
-use std::path::Path;
-
-use reqwest::Body;
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
-
 use crate::error::OpenAIError;
 use crate::types::InputSource;
+use reqwest::Body;
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn file_stream_body(source: InputSource) -> Result<Body, OpenAIError> {
     let body = match source {
         InputSource::Path { path } => {
-            let file = File::open(path)
+            let file = tokio::fs::File::open(path)
                 .await
                 .map_err(|e| OpenAIError::FileReadError(e.to_string()))?;
-            let stream = FramedRead::new(file, BytesCodec::new());
+            let stream =
+                tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new());
             Body::wrap_stream(stream)
         }
         _ => {
@@ -30,6 +27,7 @@ pub(crate) async fn create_file_part(
     source: InputSource,
 ) -> Result<reqwest::multipart::Part, OpenAIError> {
     let (stream, file_name) = match source {
+        #[cfg(not(target_family = "wasm"))]
         InputSource::Path { path } => {
             let file_name = path
                 .file_name()
@@ -52,16 +50,14 @@ pub(crate) async fn create_file_part(
         InputSource::VecU8 { filename, vec } => (Body::from(vec), filename),
     };
 
-    let file_part = reqwest::multipart::Part::stream(stream)
-        .file_name(file_name)
-        .mime_str("application/octet-stream")
-        .unwrap();
+    let file_part = reqwest::multipart::Part::stream(stream).file_name(file_name);
 
     Ok(file_part)
 }
 
-pub(crate) fn create_all_dir<P: AsRef<Path>>(dir: P) -> Result<(), OpenAIError> {
-    let exists = match Path::try_exists(dir.as_ref()) {
+#[cfg(all(any(feature = "image", feature = "audio"), not(target_family = "wasm")))]
+pub(crate) fn create_all_dir<P: AsRef<std::path::Path>>(dir: P) -> Result<(), OpenAIError> {
+    let exists = match std::path::Path::try_exists(dir.as_ref()) {
         Ok(exists) => exists,
         Err(e) => return Err(OpenAIError::FileSaveError(e.to_string())),
     };

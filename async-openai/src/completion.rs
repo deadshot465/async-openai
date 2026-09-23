@@ -2,8 +2,11 @@ use crate::{
     client::Client,
     config::Config,
     error::OpenAIError,
-    types::{CompletionResponseStream, CreateCompletionRequest, CreateCompletionResponse},
+    types::completions::{CreateCompletionRequest, CreateCompletionResponse},
+    RequestOptions,
 };
+
+use crate::types::completions::CompletionResponseStream;
 
 /// Given a prompt, the model will return one or more predicted completions,
 /// and can also return the probabilities of alternative tokens at each position.
@@ -13,11 +16,15 @@ use crate::{
 /// Related guide: [Legacy Completions](https://platform.openai.com/docs/guides/gpt/completions-api)
 pub struct Completions<'c, C: Config> {
     client: &'c Client<C>,
+    pub(crate) request_options: RequestOptions,
 }
 
 impl<'c, C: Config> Completions<'c, C> {
     pub fn new(client: &'c Client<C>) -> Self {
-        Self { client }
+        Self {
+            client,
+            request_options: RequestOptions::new(),
+        }
     }
 
     /// Creates a completion for the provided prompt and parameters
@@ -39,7 +46,9 @@ impl<'c, C: Config> Completions<'c, C> {
                 ));
             }
         }
-        self.client.post("/completions", request).await
+        self.client
+            .post("/completions", request, &self.request_options)
+            .await
     }
 
     /// Creates a completion request for the provided prompt and parameters
@@ -55,7 +64,7 @@ impl<'c, C: Config> Completions<'c, C> {
         T0 = serde::Serialize,
         R = serde::de::DeserializeOwned,
         stream = "true",
-        where_clause = "R: std::marker::Send + 'static"
+        where_clause = "R: crate::traits::MaybeSend + 'static"
     )]
     #[allow(unused_mut)]
     pub async fn create_stream(
@@ -72,6 +81,8 @@ impl<'c, C: Config> Completions<'c, C> {
 
             request.stream = Some(true);
         }
-        Ok(self.client.post_stream("/completions", request).await)
+        self.client
+            .post_stream("/completions", request, &self.request_options)
+            .await
     }
 }

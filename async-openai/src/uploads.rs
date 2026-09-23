@@ -1,18 +1,24 @@
 use crate::{
     config::Config,
     error::OpenAIError,
-    types::{AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, Upload, UploadPart},
-    Client,
+    types::uploads::{
+        AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, Upload, UploadPart,
+    },
+    Client, RequestOptions,
 };
 
 /// Allows you to upload large files in multiple parts.
 pub struct Uploads<'c, C: Config> {
     client: &'c Client<C>,
+    pub(crate) request_options: RequestOptions,
 }
 
 impl<'c, C: Config> Uploads<'c, C> {
     pub fn new(client: &'c Client<C>) -> Self {
-        Self { client }
+        Self {
+            client,
+            request_options: RequestOptions::new(),
+        }
     }
 
     /// Creates an intermediate [Upload](https://platform.openai.com/docs/api-reference/uploads/object) object that
@@ -22,15 +28,16 @@ impl<'c, C: Config> Uploads<'c, C> {
     /// Once you complete the Upload, we will create a [File](https://platform.openai.com/docs/api-reference/files/object)
     /// object that contains all the parts you uploaded. This File is usable in the rest of our platform as a regular File object.
     ///            
-    /// For certain `purpose`s, the correct `mime_type` must be specified. Please refer to documentation for the
-    /// supported MIME types for your use case:
-    /// - [Assistants](https://platform.openai.com/docs/assistants/tools/file-search/supported-files)
+    /// For certain `purpose` values, the correct `mime_type` must be specified. Please refer to documentation for the
+    /// [supported MIME types for your use case](https://platform.openai.com/docs/guides/tools-file-search#supported-files)
     ///
     /// For guidance on the proper filename extensions for each purpose, please follow the documentation on
     /// [creating a File](https://platform.openai.com/docs/api-reference/files/create).
     #[crate::byot(T0 = serde::Serialize, R = serde::de::DeserializeOwned)]
     pub async fn create(&self, request: CreateUploadRequest) -> Result<Upload, OpenAIError> {
-        self.client.post("/uploads", request).await
+        self.client
+            .post("/uploads", request, &self.request_options)
+            .await
     }
 
     /// Adds a [Part](https://platform.openai.com/docs/api-reference/uploads/part-object) to an
@@ -45,14 +52,18 @@ impl<'c, C: Config> Uploads<'c, C> {
         T0 = std::fmt::Display,
         T1 = Clone,
         R = serde::de::DeserializeOwned,
-        where_clause =  "reqwest::multipart::Form: crate::traits::AsyncTryFrom<T1, Error = OpenAIError>")]
+        where_clause =  "reqwest::multipart::Form: crate::traits::AsyncTryFrom<T1, Error = OpenAIError>, T1: crate::traits::MaybeSend + 'static")]
     pub async fn add_part(
         &self,
         upload_id: &str,
         request: AddUploadPartRequest,
     ) -> Result<UploadPart, OpenAIError> {
         self.client
-            .post_form(&format!("/uploads/{upload_id}/parts"), request)
+            .post_form(
+                &format!("/uploads/{upload_id}/parts"),
+                request,
+                &self.request_options,
+            )
             .await
     }
 
@@ -73,7 +84,11 @@ impl<'c, C: Config> Uploads<'c, C> {
         request: CompleteUploadRequest,
     ) -> Result<Upload, OpenAIError> {
         self.client
-            .post(&format!("/uploads/{upload_id}/complete"), request)
+            .post(
+                &format!("/uploads/{upload_id}/complete"),
+                request,
+                &self.request_options,
+            )
             .await
     }
 
@@ -84,6 +99,7 @@ impl<'c, C: Config> Uploads<'c, C> {
             .post(
                 &format!("/uploads/{upload_id}/cancel"),
                 serde_json::json!({}),
+                &self.request_options,
             )
             .await
     }

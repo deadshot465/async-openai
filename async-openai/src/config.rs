@@ -3,6 +3,8 @@ use reqwest::header::{HeaderMap, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 
+use crate::error::OpenAIError;
+
 /// Default v1 API base url
 pub const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 /// Organization header
@@ -10,12 +12,12 @@ pub const OPENAI_ORGANIZATION_HEADER: &str = "OpenAI-Organization";
 /// Project header
 pub const OPENAI_PROJECT_HEADER: &str = "OpenAI-Project";
 
-/// Calls to the Assistants API require that you pass a Beta header
+/// Header for opting into OpenAI beta API capabilities.
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 
 /// [crate::Client] relies on this for every API call on OpenAI
 /// or Azure OpenAI service
-pub trait Config: Clone {
+pub trait Config: Send + Sync {
     fn headers(&self) -> HeaderMap;
     fn url(&self, path: &str) -> String;
     fn query(&self) -> Vec<(&str, &str)>;
@@ -23,6 +25,88 @@ pub trait Config: Clone {
     fn api_base(&self) -> &str;
 
     fn api_key(&self) -> &SecretString;
+}
+
+/// Macro to implement Config trait for pointer types with dyn objects
+macro_rules! impl_config_for_ptr {
+    ($t:ty) => {
+        impl Config for $t {
+            fn headers(&self) -> HeaderMap {
+                self.as_ref().headers()
+            }
+            fn url(&self, path: &str) -> String {
+                self.as_ref().url(path)
+            }
+            fn query(&self) -> Vec<(&str, &str)> {
+                self.as_ref().query()
+            }
+            fn api_base(&self) -> &str {
+                self.as_ref().api_base()
+            }
+            fn api_key(&self) -> &SecretString {
+                self.as_ref().api_key()
+            }
+        }
+    };
+}
+
+impl_config_for_ptr!(Box<dyn Config>);
+impl_config_for_ptr!(std::sync::Arc<dyn Config>);
+
+// Private helper functions for default values
+fn default_api_base() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| OPENAI_API_BASE.to_string())
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        OPENAI_API_BASE.to_string()
+    }
+}
+
+fn default_api_key() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::env::var("OPENAI_API_KEY")
+            .or_else(|_| {
+                std::env::var("OPENAI_ADMIN_KEY").map(|admin_key| {
+                    tracing::warn!("Using OPENAI_ADMIN_KEY, OPENAI_API_KEY not set");
+                    admin_key
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        String::new()
+    }
+}
+
+fn default_org_id() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::env::var("OPENAI_ORG_ID").unwrap_or_default()
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        String::new()
+    }
+}
+
+fn default_project_id() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::env::var("OPENAI_PROJECT_ID").unwrap_or_default()
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        String::new()
+    }
 }
 
 /// Configuration for OpenAI API
@@ -33,23 +117,24 @@ pub struct OpenAIConfig {
     api_key: SecretString,
     org_id: String,
     project_id: String,
+    #[serde(skip)]
+    custom_headers: HeaderMap,
 }
 
 impl Default for OpenAIConfig {
     fn default() -> Self {
         Self {
-            api_base: OPENAI_API_BASE.to_string(),
-            api_key: std::env::var("OPENAI_API_KEY")
-                .unwrap_or_else(|_| "".to_string())
-                .into(),
-            org_id: Default::default(),
-            project_id: Default::default(),
+            api_base: default_api_base(),
+            api_key: default_api_key().into(),
+            org_id: default_org_id(),
+            project_id: default_project_id(),
+            custom_headers: HeaderMap::new(),
         }
     }
 }
 
 impl OpenAIConfig {
-    /// Create client with default [OPENAI_API_BASE] url and default API key from OPENAI_API_KEY env var
+    /// Create client with default [OPENAI_API_BASE] url (can also be changed with OPENAI_BASE_URL env var) and default API key from OPENAI_API_KEY env var
     pub fn new() -> Self {
         Default::default()
     }
@@ -76,6 +161,21 @@ impl OpenAIConfig {
     pub fn with_api_base<S: Into<String>>(mut self, api_base: S) -> Self {
         self.api_base = api_base.into();
         self
+    }
+
+    /// Add a custom header that will be included in all requests.
+    /// Headers are merged with existing headers, with custom headers taking precedence.
+    pub fn with_header<K, V>(mut self, key: K, value: V) -> Result<Self, OpenAIError>
+    where
+        K: reqwest::header::IntoHeaderName,
+        V: TryInto<reqwest::header::HeaderValue>,
+        V::Error: Into<reqwest::header::InvalidHeaderValue>,
+    {
+        let header_value = value.try_into().map_err(|e| {
+            OpenAIError::InvalidArgument(format!("Invalid header value: {}", e.into()))
+        })?;
+        self.custom_headers.insert(key, header_value);
+        Ok(self)
     }
 
     pub fn org_id(&self) -> &str {
@@ -108,9 +208,10 @@ impl Config for OpenAIConfig {
                 .unwrap(),
         );
 
-        // hack for Assistants APIs
-        // Calls to the Assistants API require that you pass a Beta header
-        headers.insert(OPENAI_BETA_HEADER, "assistants=v2".parse().unwrap());
+        // Merge custom headers, with custom headers taking precedence
+        for (key, value) in self.custom_headers.iter() {
+            headers.insert(key, value.clone());
+        }
 
         headers
     }
@@ -146,9 +247,7 @@ impl Default for AzureConfig {
     fn default() -> Self {
         Self {
             api_base: Default::default(),
-            api_key: std::env::var("OPENAI_API_KEY")
-                .unwrap_or_else(|_| "".to_string())
-                .into(),
+            api_key: default_api_key().into(),
             deployment_id: Default::default(),
             api_version: Default::default(),
         }
@@ -209,5 +308,61 @@ impl Config for AzureConfig {
 
     fn query(&self) -> Vec<(&str, &str)> {
         vec![("api-version", &self.api_version)]
+    }
+}
+
+#[cfg(all(test, feature = "chat-completion"))]
+mod test {
+    use super::*;
+    use crate::types::chat::{
+        ChatCompletionRequestMessage, ChatCompletionRequestUserMessage, CreateChatCompletionRequest,
+    };
+    use crate::Client;
+    use std::sync::Arc;
+    #[test]
+    fn test_client_creation() {
+        unsafe { std::env::set_var("OPENAI_API_KEY", "test") }
+        let openai_config = OpenAIConfig::default();
+        let config = Box::new(openai_config.clone()) as Box<dyn Config>;
+        let client = Client::with_config(config);
+        assert!(client.config().url("").ends_with("/v1"));
+
+        let config = Arc::new(openai_config) as Arc<dyn Config>;
+        let client = Client::with_config(config);
+        assert!(client.config().url("").ends_with("/v1"));
+        let cloned_client = client.clone();
+        assert!(cloned_client.config().url("").ends_with("/v1"));
+    }
+
+    async fn dynamic_dispatch_compiles(client: &Client<Box<dyn Config>>) {
+        drop(client.chat().create(CreateChatCompletionRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![ChatCompletionRequestMessage::User(
+                ChatCompletionRequestUserMessage {
+                    content: "Hello, world!".into(),
+                    ..Default::default()
+                },
+            )],
+            ..Default::default()
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_dispatch() {
+        let openai_config = OpenAIConfig::default();
+        let azure_config = AzureConfig::default();
+
+        let azure_client = Client::with_config(Box::new(azure_config.clone()) as Box<dyn Config>);
+        let oai_client = Client::with_config(Box::new(openai_config.clone()) as Box<dyn Config>);
+
+        dynamic_dispatch_compiles(&azure_client).await;
+        dynamic_dispatch_compiles(&oai_client).await;
+
+        tokio::spawn(async move { dynamic_dispatch_compiles(&azure_client).await })
+            .await
+            .unwrap();
+        tokio::spawn(async move { dynamic_dispatch_compiles(&oai_client).await })
+            .await
+            .unwrap();
     }
 }

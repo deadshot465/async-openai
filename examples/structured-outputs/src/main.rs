@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use async_openai::{
-    types::{
+    types::chat::{
         ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage,
         CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema,
     },
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         json_schema: ResponseFormatJsonSchema {
             description: None,
             name: "math_reasoning".into(),
-            schema: Some(schema),
+            schema,
             strict: Some(true),
         },
     };
